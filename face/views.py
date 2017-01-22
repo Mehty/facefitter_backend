@@ -1,0 +1,85 @@
+from clarifai.rest import ClarifaiApp
+from clarifai.rest import Image as ClImage
+from glob import glob
+import os
+from django.shortcuts import render
+from django.http import HttpResponse
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .serializers import FaceSerializer
+from .models import Face
+
+def prediction(bytes):
+	app = ClarifaiApp()
+	model = app.models.get('general-v1.3')
+	
+	return model.predict_by_base64(bytes)['outputs'][0]['data']['concepts']
+
+def create_image_set(img_path):
+	app = ClarifaiApp()
+	model = app.models.get('general-v1.3')
+	images = {}
+	for file_path in glob(os.path.join(img_path, '*.jpg')):
+		#print(file_path)
+		images[file_path] = model.predict_by_filename(file_path)['outputs'][0]['data']['concepts']
+
+	return images
+
+
+#print hairstyles
+
+def match(byte):
+	hairstyles = create_image_set('~/hairstyle/')
+	pic = prediction(byte)
+	c1 = 0
+	c2 = 0
+	tags = {}
+	lst = []
+	for k, v in hairstyles.items():
+		for i in v:
+			for x in pic:
+				if x['name'] == i['name']:
+					c1 += 1
+					tags[i['name']] = i['value']
+					c2 += i['value']
+		if  len(lst) == 0:
+			lst.append([tags, c1, c2, k])
+			c1 = 0
+			c2 = 0
+			tags = {}
+		elif c1 > lst[0][1]:
+			del lst[:]
+			lst.append([tags, c1, c2, k])
+			c1 = 0
+			c2 = 0
+			tags = {}
+		elif c1 == lst[0][1]:
+			if c2 > lst[0][2]:
+				del lst[:]
+				lst.append([tags, c1, c2, k])
+				c1 = 0
+				c2 = 0
+				tags = {}
+			elif c2 == lst[0][2]:
+				lst.append([tags, c1, c2, k])
+				c1 = 0
+				c2 = 0
+				tags = {}
+	print lst
+
+
+
+@api_view(['POST'])
+def faceRequest(request):
+    if request.method == 'POST':
+        theFace = Face()
+        data = request.data
+        serializer = FaceSerializer(data)
+        if data.get('base64'):
+            res = match(data['base64'])
+            return Response(res, status = status.HTTP_200_OK)
+        return Response("Did Not Work", status=status.HTTP_400_BAD_REQUEST)
+        
+        #return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
